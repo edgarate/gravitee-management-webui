@@ -18,6 +18,7 @@ import angular = require('angular');
 import SidenavService from '../../../../components/sidenav/sidenav.service';
 import UserService from '../../../../services/user.service';
 import {QualityMetrics} from "../../../../entities/qualityMetrics";
+import ApiService from "../../../../services/api.service";
 
 class ApiPortalController {
   private initialApi: any;
@@ -36,7 +37,7 @@ class ApiPortalController {
   private isQualityEnabled: boolean;
 
   constructor(
-    private ApiService,
+    private ApiService: ApiService,
     private NotificationService,
     private UserService: UserService,
     private $scope,
@@ -361,7 +362,7 @@ class ApiPortalController {
       template: require('../../../../components/dialog/confirmWarning.dialog.html'),
       clickOutsideToClose: true,
       locals: {
-        title: `Are you sure you want to ${started ? 'stop' : 'start'} the API ?`,
+        title: `Are you sure you want to ${started ? 'stop' : 'start'} the API?`,
         msg: '',
         confirmButton: (started ? 'stop' : 'start')
       }
@@ -372,16 +373,113 @@ class ApiPortalController {
             this.api.state = 'stopped';
             this.api.etag = response.headers('etag');
             this.$rootScope.$broadcast("apiChangeSuccess", {api: this.api});
-            this.NotificationService.show(`API ${this.api.name} has been stopped!`);
+            this.NotificationService.show(`API ${this.api.name} has been stopped with success`);
           });
         } else {
           this.ApiService.start(this.api).then((response) => {
             this.api.state = 'started';
             this.api.etag = response.headers('etag');
-            this.NotificationService.show(`API ${this.api.name} has been started!`);
+            this.NotificationService.show(`API ${this.api.name} has been started with success`);
             this.$rootScope.$broadcast("apiChangeSuccess", {api: this.api});
           });
         }
+      }
+    })
+  }
+
+  changeApiLifecycle() {
+    let clonedApi = _.cloneDeep(this.api);
+    let published = clonedApi.lifecycle_state === 'published';
+    clonedApi.lifecycle_state = published ? 'unpublished' : 'published';
+    this.$mdDialog.show({
+      controller: 'DialogConfirmController',
+      controllerAs: 'ctrl',
+      template: require('../../../../components/dialog/confirmWarning.dialog.html'),
+      clickOutsideToClose: true,
+      locals: {
+        title: `Are you sure you want to ${published ? 'unpublish' : 'publish'} the API?`,
+        msg: '',
+        confirmButton: (published ? 'unpublish' : 'publish')
+      }
+    }).then((response: boolean) => {
+      if (response) {
+        this.api = clonedApi;
+        if (published) {
+          this.ApiService.update(clonedApi).then((response) => {
+            this.api.lifecycle_state = 'unpublished';
+            this.api.etag = response.headers('etag');
+            this.$rootScope.$broadcast("apiChangeSuccess", {api: this.api});
+            this.NotificationService.show(`API ${this.api.name} has been unpublished with success`);
+          });
+        } else {
+          this.ApiService.update(clonedApi).then((response) => {
+            this.api.lifecycle_state = 'published';
+            this.api.etag = response.headers('etag');
+            this.NotificationService.show(`API ${this.api.name} has been published with success`);
+            this.$rootScope.$broadcast("apiChangeSuccess", {api: this.api});
+          });
+        }
+      }
+    })
+  }
+
+  canAskForReview(): boolean {
+    return this.Constants.apiReview.enabled && (this.api.workflow_state === 'draft' || this.api.workflow_state === 'request_for_changes');
+  }
+
+  canChangeApiLifecycle(): boolean {
+    return !this.Constants.apiReview.enabled || (this.Constants.apiReview.enabled && this.api.workflow_state === 'review_ok');
+  }
+
+  canRequestForChanges(): boolean {
+    return this.Constants.apiReview.enabled && (!this.api.workflow_state || this.api.workflow_state === 'review_ok');
+  }
+
+  canPublish(): boolean {
+    if (this.Constants.apiReview.enabled) {
+      return !this.api.workflow_state || this.api.workflow_state === 'review_ok';
+    } else {
+      return this.api.lifecycle_state==='created' || this.api.lifecycle_state==='unpublished';
+    }
+  }
+
+  askForReview() {
+    this.$mdDialog.show({
+      controller: 'DialogConfirmController',
+      controllerAs: 'ctrl',
+      template: require('../../../../components/dialog/confirmWarning.dialog.html'),
+      clickOutsideToClose: true,
+      locals: {
+        title: `Are you sure you want to ask for a review of the API?`,
+        msg: '',
+        confirmButton: 'Ask for review'
+      }
+    }).then((response: boolean) => {
+      if (response) {
+        this.ApiService.askForReview(this.api).then((response) => {
+          this.api.workflow_state = 'in_review';
+          this.api.etag = response.headers('etag');
+          this.$rootScope.$broadcast("apiChangeSuccess", {api: this.api});
+          this.NotificationService.show(`Review has been asked for API ${this.api.name}`);
+        });
+      }
+    })
+  }
+
+  requestForChanges() {
+    this.$mdDialog.show({
+      controller: 'DialogRequestForChangesController',
+      controllerAs: '$ctrl',
+      template: require('./dialog/requestForChanges.dialog.html'),
+      clickOutsideToClose: true,
+    }).then((response: boolean) => {
+      if (response) {
+        this.ApiService.rejectReview(this.api, response.message).then((response) => {
+          this.api.workflow_state = 'request_for_changes';
+          this.api.etag = response.headers('etag');
+          this.$rootScope.$broadcast("apiChangeSuccess", {api: this.api});
+          this.NotificationService.show(`Changes has been requested for API ${this.api.name}`);
+        });
       }
     })
   }
